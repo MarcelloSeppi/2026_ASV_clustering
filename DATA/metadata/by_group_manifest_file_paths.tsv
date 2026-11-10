@@ -1,0 +1,4 @@
+pcr_primers_name	instrument_model	0
+515f_806r_A	Illumina HiSeq 2500	./DATA/data/preprocessing/denoising/by_group/515f_806r_A/Illumina HiSeq 2500/batch_0/manifest.tsv
+515f_806r_A	Illumina MiSeq	./DATA/data/preprocessing/denoising/by_group/515f_806r_A/Illumina MiSeq/batch_0/manifest.tsv
+515f_806r_B	Illumina MiSeq	./DATA/data/preprocessing/denoising/by_group/515f_806r_B/Illumina MiSeq/batch_0/manifest.tsv
