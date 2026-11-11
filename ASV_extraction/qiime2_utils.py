@@ -823,7 +823,9 @@ OMEGA_A <- if(opt$omega_a=='NULL') 1e-40 else as.numeric(opt$omega_a)"""
     count = content.count('OMEGA_A')
     print(f"OMEGA_A appears {count} times in patched script (expected 9)")
 
-
+    # set as executable
+    import stat
+    os.chmod(output_path, os.stat(output_path).st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
 
 
 
@@ -925,12 +927,13 @@ def apply_omega_a_patch(patched_r_script_path):
 
 PATCHED_R_SCRIPT_PATH = './patched_dada2/run_dada_patched.R'
 
-def denoise_ASVs_extraction2(seq, truncation_length, omega_a=1e-40, cores=3):
+def denoise_ASVs_extraction2(seq, truncation_length, create_patch=False, omega_a=1e-40, cores=3):
     import q2_dada2._denoise as _denoise
     from q2_dada2._denoise import SingleLanePerSampleSingleEndFastqDirFmt
     
     # --- patch setup ---
-    create_patched_r_script(PATCHED_R_SCRIPT_PATH)
+    if create_patch:
+        create_patched_r_script(PATCHED_R_SCRIPT_PATH)
     apply_omega_a_patch(PATCHED_R_SCRIPT_PATH)
 
     # --- validate ---
