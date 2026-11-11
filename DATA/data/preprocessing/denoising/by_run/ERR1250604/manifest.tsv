@@ -1,2 +1,2 @@
 sampleid	absolute-filepath	direction	relative-filepath	pcr_primers_name	f_primer	r_primer	instrument_model
-ERR1250604	/media/Data/Documenti/SYNK/Universita/Padova/Progetti Ricerca/2026 - ASV clustering/ASV_extraction/DATA/data/raw_reads/ERR1250604.fastq.gz	forward	./DATA/data/raw_reads/ERR1250604.fastq.gz	515f_806r_A	GTGYCAGCMGCCGCGGTAA	GGACTACNVGGGTWTCTAAT	Illumina MiSeq
+ERR1250604	/mnt/data300/projects/2026_ASV_clustering/DATA/data/raw_reads/ERR1250604.fastq.gz	forward	../DATA/data/raw_reads/ERR1250604.fastq.gz	515f_806r_A	GTGYCAGCMGCCGCGGTAA	GGACTACNVGGGTWTCTAAT	Illumina MiSeq
