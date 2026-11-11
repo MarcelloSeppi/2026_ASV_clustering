@@ -1,0 +1,26 @@
+No reads passed the filter. trunc_len (3) may be longer than read lengths, or other arguments (such as max_ee or trunc_q) may be preventing reads from passing the filter.Traceback (most recent call last):
+  File "/home/ubuntu/python/micromamba_envs/envs/qiime2-env/lib/python3.10/site-packages/q2_dada2/_denoise.py", line 231, in _denoise_single
+    run_commands([cmd])
+  File "/home/ubuntu/python/micromamba_envs/envs/qiime2-env/lib/python3.10/site-packages/qiime2/plugin/util.py", line 65, in run_commands
+    subprocess.run(cmd, check=True)
+  File "/home/ubuntu/python/micromamba_envs/envs/qiime2-env/lib/python3.10/subprocess.py", line 526, in run
+    raise CalledProcessError(retcode, process.args,
+subprocess.CalledProcessError: Command '['run_dada.R', '--input_directory', '/tmp/qiime2/ubuntu/data/b37c2667-cd90-495b-ab12-16827be8b079/data', '--output_path', '/tmp/tmplhjnjkl5/output.tsv.biom', '--output_track', '/tmp/tmplhjnjkl5/track.tsv', '--filtered_directory', '/tmp/tmplhjnjkl5', '--truncation_length', '3', '--trim_left', '0', '--max_expected_errors', '2.0', '--truncation_quality_score', '2', '--max_length', 'Inf', '--pooling_method', 'independent', '--chimera_method', 'consensus', '--min_parental_fold', '1.0', '--allow_one_off', 'False', '--num_threads', '1', '--learn_min_reads', '1000000', '--homopolymer_gap_penalty', 'NULL', '--band_size', '16']' returned non-zero exit status 2.
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/mnt/data300/projects/2026_ASV_clustering/ASV_extraction/qiime2_utils.py", line 1079, in full_preprocessing_pipeline
+    asv_tab, asv_seq, denoising_stats = denoise_ASVs_extraction(seq,truncation_length,cores=cores)
+  File "/mnt/data300/projects/2026_ASV_clustering/ASV_extraction/qiime2_utils.py", line 720, in denoise_ASVs_extraction
+    denoise_r = dada2.methods.denoise_single(
+  File "<decorator-gen-109>", line 2, in denoise_single
+  File "/home/ubuntu/python/micromamba_envs/envs/qiime2-env/lib/python3.10/site-packages/qiime2/sdk/action.py", line 221, in bound_callable
+    outputs = self._callable_executor_(
+  File "/home/ubuntu/python/micromamba_envs/envs/qiime2-env/lib/python3.10/site-packages/qiime2/sdk/action.py", line 359, in _callable_executor_
+    output_views = self._callable(**view_args)
+  File "/home/ubuntu/python/micromamba_envs/envs/qiime2-env/lib/python3.10/site-packages/q2_dada2/_denoise.py", line 257, in denoise_single
+    return _denoise_single(
+  File "/home/ubuntu/python/micromamba_envs/envs/qiime2-env/lib/python3.10/site-packages/q2_dada2/_denoise.py", line 234, in _denoise_single
+    raise ValueError(
+ValueError: No reads passed the filter. trunc_len (3) may be longer than read lengths, or other arguments (such as max_ee or trunc_q) may be preventing reads from passing the filter.
