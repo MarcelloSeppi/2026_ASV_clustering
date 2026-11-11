@@ -839,8 +839,10 @@ OMEGA_A <- if(opt$omega_a=='NULL') 1e-40 else as.numeric(opt$omega_a)"""
     print(f"Patched R script saved to: {output_path}")
 
     # verify all OMEGA_A occurrences
-    count = content.count('OMEGA_A')
-    print(f"OMEGA_A appears {count} times in patched script (expected 9)")
+    count_upper = content.count('OMEGA_A')
+    count_lower = content.count('omega_a')
+    print(f"OMEGA_A (upper): {count_upper} times in patched script (expected 21)")
+    print(f"omega_a (lower): {count_lower} times in patched script (expected 3)")  # option def, opt$omega_a, help string
 
     # set as executable
     import stat
@@ -853,10 +855,70 @@ def apply_omega_a_patch(patched_r_script_path):
     Monkey-patches _denoise_single() to use the patched R script and
     accept an omega_a parameter.
 
+    _denoise object is modified to call the patched function when _denoise.denoise_single() is called
+
     Parameters
     ----------
     patched_r_script_path : str
         Path to the patched run_dada.R script created by create_patched_r_script().
+
+        
+    ###########################################
+    #### ORIGINAL _denoise_single FUNCTION ####
+
+    def _denoise_single(demultiplexed_seqs, trunc_len, trim_left, max_ee, trunc_q,
+                        max_len, pooling_method, chimera_method,
+                        min_fold_parent_over_abundance, allow_one_off,
+                        n_threads, n_reads_learn, hashed_feature_ids,
+                        homopolymer_gap_penalty, band_size, retain_all_samples):
+        _check_inputs(**locals())
+        if trunc_len != 0 and trim_left >= trunc_len:
+            raise ValueError("trim_left (%r) must be smaller than trunc_len (%r)"
+                            % (trim_left, trunc_len))
+        if max_len != 0 and max_len < trunc_len:
+            raise ValueError("trunc_len (%r) must be no bigger than max_len (%r)"
+                            % (trunc_len, max_len))
+        # Coerce for single end read analysis
+        max_len = 'Inf' if max_len == 0 else max_len
+
+        with tempfile.TemporaryDirectory() as temp_dir_name:
+            biom_fp = os.path.join(temp_dir_name, 'output.tsv.biom')
+            track_fp = os.path.join(temp_dir_name, 'track.tsv')
+
+            cmd = ['run_dada.R',
+                '--input_directory', str(demultiplexed_seqs),
+                '--output_path', biom_fp,
+                '--output_track', track_fp,
+                '--filtered_directory', temp_dir_name,
+                '--truncation_length', str(trunc_len),
+                '--trim_left', str(trim_left),
+                '--max_expected_errors', str(max_ee),
+                '--truncation_quality_score', str(trunc_q),
+                '--max_length', str(max_len),
+                '--pooling_method', str(pooling_method),
+                '--chimera_method', str(chimera_method),
+                '--min_parental_fold', str(min_fold_parent_over_abundance),
+                '--allow_one_off', str(allow_one_off),
+                '--num_threads', str(n_threads),
+                '--learn_min_reads', str(n_reads_learn),
+                '--homopolymer_gap_penalty', str(homopolymer_gap_penalty),
+                '--band_size', str(band_size)]
+            try:
+                run_commands([cmd])
+            except subprocess.CalledProcessError as e:
+                if e.returncode == 2:
+                    raise ValueError(
+                        "No reads passed the filter. trunc_len (%r) may be longer"
+                        " than read lengths, or other arguments (such as max_ee"
+                        " or trunc_q) may be preventing reads from passing the"
+                        " filter." % trunc_len)
+                else:
+                    raise Exception("An error was encountered while running DADA2"
+                                    " in R (return code %d), please inspect stdout"
+                                    " and stderr to learn more." % e.returncode)
+            return _denoise_helper(biom_fp, track_fp, hashed_feature_ids,
+                                retain_all_samples)
+
     """
     import os
     import tempfile
@@ -869,7 +931,8 @@ def apply_omega_a_patch(patched_r_script_path):
     # check if patch has already been applied
     if getattr(_denoise._denoise_single, '_is_omega_a_patched', False):
         print("Patch already applied, skipping.")
-        return
+        return _denoise._denoise_single  # <-- return the existing patched function
+    
 
 
     # keep a reference to the original functions we still need
@@ -877,7 +940,7 @@ def apply_omega_a_patch(patched_r_script_path):
     _denoise_helper = _denoise._denoise_helper
     run_commands   = _denoise.run_commands
 
-    def _patched_denoise_single(demultiplexed_seqs, trunc_len, trim_left, max_ee, trunc_q,
+    def _denoise_single_patched(demultiplexed_seqs, trunc_len, trim_left, max_ee, trunc_q,
                                 max_len, pooling_method, chimera_method,
                                 min_fold_parent_over_abundance, allow_one_off,
                                 n_threads, n_reads_learn, hashed_feature_ids,
@@ -937,11 +1000,12 @@ def apply_omega_a_patch(patched_r_script_path):
                                    retain_all_samples)
 
     # mark the patched function so we can detect it
-    _patched_denoise_single._is_omega_a_patched = True
+    _denoise_single_patched._is_omega_a_patched = True
 
-    _denoise._denoise_single = _patched_denoise_single
-    print("Patch applied: _denoise_single now accepts omega_a and uses patched R script")
+    #_denoise._denoise_single = _denoise_single_patched
+    #print("Patch applied: _denoise_single now accepts omega_a and uses patched R script")
 
+    return _denoise_single_patched
 
 
 PATCHED_R_SCRIPT_PATH = os.path.abspath("./patched_dada2/run_dada_patched.R")
@@ -955,7 +1019,7 @@ def denoise_ASVs_extraction2(seq, truncation_length, create_patch=False, omega_a
     # --- patch setup ---
     if create_patch:
         create_patched_r_script(PATCHED_R_SCRIPT_PATH)
-    apply_omega_a_patch(PATCHED_R_SCRIPT_PATH)
+    _denoise._denoise_single = apply_omega_a_patch(PATCHED_R_SCRIPT_PATH)
 
     # --- validate ---
     if truncation_length == 0:
