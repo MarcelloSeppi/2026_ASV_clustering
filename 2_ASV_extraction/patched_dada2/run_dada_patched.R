@@ -204,7 +204,11 @@ option_list = list(
   make_option(c("--band_size"), action="store", default='NULL', type='character',
               help="When set, banded Needleman-Wunsch alignments are performed."),
   make_option(c("--omega_a"), action="store", default='NULL', type='character',
-              help="Threshold for calling new ASVs. Lower = more conservative. Default 1e-40.")
+              help="Threshold for calling new ASVs. Lower = more conservative. Default 1e-40."),
+  make_option(c("--derep_counts_path"), action="store", default='NULL', type='character',
+              help="File path to output dereplicated sequence counts tsv."),
+  make_option(c("--derep_map_path"), action="store", default='NULL', type='character',
+              help="File path to output derep-to-ASV assignment map tsv.")
 )
 opt = parse_args(OptionParser(option_list=option_list))
 
@@ -248,6 +252,8 @@ if (opt$homopolymer_gap_penalty=='NULL'){
   }
 }
 BAND_SIZE <- if(opt$band_size=='NULL') NULL else as.integer(opt$band_size)
+derep_counts_fp <- opt$derep_counts_path
+derep_map_fp    <- opt$derep_map_path
 OMEGA_A <- if(opt$omega_a=='NULL') 1e-40 else as.numeric(opt$omega_a)
 
 ### VALIDATE ARGUMENTS ###
@@ -411,6 +417,21 @@ if(inp.dirR =='NULL'){#for CCS/sinlge/pyro read analysis
   }
   # Make sequence table
   seqtab <- makeSequenceTable(dds)
+  ### SAVE DEREP COUNTS AND MAP ###
+  if(derep_counts_fp != 'NULL' && derep_map_fp != 'NULL') {
+    drp_final <- derepFastq(filts[[1]])
+    derep_counts_df <- data.frame(
+      derep_index = seq_along(drp_final$uniques),
+      count       = as.integer(drp_final$uniques)
+    )
+    write.table(derep_counts_df, derep_counts_fp, sep="\t", row.names=FALSE, quote=FALSE)
+    asv_map_df <- data.frame(
+      derep_index  = seq_along(dds[[1]]$map),
+      asv_index    = as.integer(dds[[1]]$map),
+      asv_sequence = colnames(seqtab)[dds[[1]]$map]
+    )
+    write.table(asv_map_df, derep_map_fp, sep="\t", row.names=FALSE, quote=FALSE)
+  }
 }else{#for paired read analysis
   denoisedF <- rep(0, length(filts))
   ddsF <- vector("list", length(filts))

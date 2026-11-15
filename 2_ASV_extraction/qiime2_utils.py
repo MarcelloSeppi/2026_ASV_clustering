@@ -738,6 +738,32 @@ def denoise_ASVs_extraction(seq,truncation_length,cores=3):
 
 
 
+def compute_md5_hashes(sequences: pd.Series) -> pd.Series:
+    """
+    Compute MD5 hashes for a Series of nucleotide sequences.
+    Uses the same hashing as QIIME2/DADA2 internally.
+    
+    Parameters
+    ----------
+    sequences : pd.Series
+        Series of nucleotide sequence strings. NaN values are preserved as NaN.
+    
+    Returns
+    -------
+    pd.Series
+        Series of MD5 hash strings, same index as input.
+    """
+    import hashlib
+    
+    return sequences.map(
+        lambda seq: hashlib.md5(seq.encode('utf-8')).hexdigest() 
+                    if pd.notna(seq) else None
+    )
+
+
+
+
+
 def create_patched_r_script(output_path):
     """
     Creates a patched version of run_dada.R that exposes OMEGA_A as a CLI argument.
@@ -825,6 +851,48 @@ OMEGA_A <- if(opt$omega_a=='NULL') 1e-40 else as.numeric(opt$omega_a)"""
             "learnErrors(filts, nreads=nreads.learn, multithread=multithread,\n                                      HOMOPOLYMER_GAP_PENALTY=HOMOPOLYMER_GAP_PENALTY, BAND_SIZE=BAND_SIZE))",
             "learnErrors(filts, nreads=nreads.learn, multithread=multithread,\n                                      HOMOPOLYMER_GAP_PENALTY=HOMOPOLYMER_GAP_PENALTY, BAND_SIZE=BAND_SIZE, OMEGA_A=OMEGA_A))"
         ),
+        # 10) Add derep_counts_path and derep_map_path to optparse option list
+        (
+            '''  make_option(c("--omega_a"), action="store", default='NULL', type='character',
+              help="Threshold for calling new ASVs. Lower = more conservative. Default 1e-40.")
+)''',
+            '''  make_option(c("--omega_a"), action="store", default='NULL', type='character',
+              help="Threshold for calling new ASVs. Lower = more conservative. Default 1e-40."),
+  make_option(c("--derep_counts_path"), action="store", default='NULL', type='character',
+              help="File path to output dereplicated sequence counts tsv."),
+  make_option(c("--derep_map_path"), action="store", default='NULL', type='character',
+              help="File path to output derep-to-ASV assignment map tsv.")
+)'''
+        ),
+        # 11) Parse derep_counts_path and derep_map_path
+        (
+            "BAND_SIZE <- if(opt$band_size=='NULL') NULL else as.integer(opt$band_size)",
+            """BAND_SIZE <- if(opt$band_size=='NULL') NULL else as.integer(opt$band_size)
+derep_counts_fp <- opt$derep_counts_path
+derep_map_fp    <- opt$derep_map_path"""
+        ),
+        # 12) Save derep counts and map after single-end denoising
+        (
+            "  # Make sequence table\n  seqtab <- makeSequenceTable(dds)\n}else{#for paired read analysis",
+            """  # Make sequence table
+  seqtab <- makeSequenceTable(dds)
+  ### SAVE DEREP COUNTS AND MAP ###
+  if(derep_counts_fp != 'NULL' && derep_map_fp != 'NULL') {
+    drp_final <- derepFastq(filts[[1]])
+    derep_counts_df <- data.frame(
+      derep_index = seq_along(drp_final$uniques),
+      count       = as.integer(drp_final$uniques)
+    )
+    write.table(derep_counts_df, derep_counts_fp, sep="\\t", row.names=FALSE, quote=FALSE)
+    asv_map_df <- data.frame(
+      derep_index  = seq_along(dds[[1]]$map),
+      asv_index    = as.integer(dds[[1]]$map),
+      asv_sequence = colnames(seqtab)[dds[[1]]$map]
+    )
+    write.table(asv_map_df, derep_map_fp, sep="\\t", row.names=FALSE, quote=FALSE)
+  }
+}else{#for paired read analysis"""
+        ),
     ]
 
     for old, new in patches:
@@ -841,8 +909,10 @@ OMEGA_A <- if(opt$omega_a=='NULL') 1e-40 else as.numeric(opt$omega_a)"""
     # verify all OMEGA_A occurrences
     count_upper = content.count('OMEGA_A')
     count_lower = content.count('omega_a')
+    count_derep = content.count('derep')
     print(f"OMEGA_A (upper): {count_upper} times in patched script (expected 21)")
-    print(f"omega_a (lower): {count_lower} times in patched script (expected 3)")  # option def, opt$omega_a, help string
+    print(f"omega_a (lower): {count_lower} times in patched script (expected 3)")
+    print(f"derep occurrences: {count_derep} (expected > 0)")
 
     # set as executable
     import stat
@@ -936,9 +1006,9 @@ def apply_omega_a_patch(patched_r_script_path):
 
 
     # keep a reference to the original functions we still need
-    _check_inputs  = _denoise._check_inputs
+    _check_inputs   = _denoise._check_inputs
     _denoise_helper = _denoise._denoise_helper
-    run_commands   = _denoise.run_commands
+    run_commands    = _denoise.run_commands
 
     def _denoise_single_patched(demultiplexed_seqs, trunc_len, trim_left, max_ee, trunc_q,
                                 max_len, pooling_method, chimera_method,
@@ -946,7 +1016,7 @@ def apply_omega_a_patch(patched_r_script_path):
                                 n_threads, n_reads_learn, hashed_feature_ids,
                                 homopolymer_gap_penalty, band_size, retain_all_samples,
                                 omega_a=1e-40):  # <-- new parameter
-
+        
         _valid_keys = set(_denoise._valid_inputs.keys())
         _check_inputs(**{k: v for k, v in locals().items() if k in _valid_keys})
 
@@ -959,8 +1029,12 @@ def apply_omega_a_patch(patched_r_script_path):
         max_len = 'Inf' if max_len == 0 else max_len
 
         with tempfile.TemporaryDirectory() as temp_dir_name:
-            biom_fp = os.path.join(temp_dir_name, 'output.tsv.biom')
-            track_fp = os.path.join(temp_dir_name, 'track.tsv')
+            import os
+            biom_fp         = os.path.join(temp_dir_name, 'output.tsv.biom')
+            track_fp        = os.path.join(temp_dir_name, 'track.tsv')
+            derep_counts_fp = os.path.join(temp_dir_name, 'derep_counts.tsv')
+            derep_map_fp    = os.path.join(temp_dir_name, 'derep_map.tsv')
+
 
             cmd = [patched_r_script_path,          # <-- patched script
                    '--input_directory', str(demultiplexed_seqs),
@@ -980,7 +1054,9 @@ def apply_omega_a_patch(patched_r_script_path):
                    '--learn_min_reads', str(n_reads_learn),
                    '--homopolymer_gap_penalty', str(homopolymer_gap_penalty),
                    '--band_size', str(band_size),
-                   '--omega_a', str(omega_a)]        # <-- new argument
+                   '--omega_a'          , str(omega_a),     # <-- new argument
+                   '--derep_counts_path', derep_counts_fp,  # <-- new
+                   '--derep_map_path'   , derep_map_fp]     # <-- new]
 
             try:
                 run_commands([cmd])
@@ -996,8 +1072,14 @@ def apply_omega_a_patch(patched_r_script_path):
                                     " in R (return code %d), please inspect stdout"
                                     " and stderr to learn more." % e.returncode)
 
-            return _denoise_helper(biom_fp, track_fp, hashed_feature_ids,
-                                   retain_all_samples)
+            # prepare additional outputs
+            derep_counts_path = os.path.join(temp_dir_name, 'derep_counts.tsv')
+            derep_map_path    = os.path.join(temp_dir_name, 'derep_map.tsv')
+
+            derep_counts = pd.read_csv(derep_counts_path,sep="\t")
+            derep_map    = pd.read_csv(derep_map_path   ,sep="\t")
+
+            return _denoise_helper(biom_fp, track_fp, hashed_feature_ids,retain_all_samples), derep_counts, derep_map
 
     # mark the patched function so we can detect it
     _denoise_single_patched._is_omega_a_patched = True
@@ -1009,7 +1091,6 @@ def apply_omega_a_patch(patched_r_script_path):
 
 
 PATCHED_R_SCRIPT_PATH = os.path.abspath("./patched_dada2/run_dada_patched.R")
-
 
 
 def denoise_ASVs_extraction2(seq, truncation_length, create_patch=False, omega_a=1e-40, cores=3):
@@ -1028,28 +1109,71 @@ def denoise_ASVs_extraction2(seq, truncation_length, create_patch=False, omega_a
     # --- unwrap QIIME2 artifact ---
     seq_unwrapped = seq.view(SingleLanePerSampleSingleEndFastqDirFmt)
 
-    # --- denoise ---
-    table, rep_sequences, metadata = _denoise._denoise_single(
-        demultiplexed_seqs             = seq_unwrapped,
-        trunc_len                      = truncation_length,
-        trim_left                      = 0,
-        max_ee                         = 2.0,
-        trunc_q                        = 2,
-        max_len                        = 0,
-        pooling_method                 = 'independent',
-        chimera_method                 = 'consensus',
-        min_fold_parent_over_abundance = 1.0,
-        allow_one_off                  = False,
-        n_threads                      = cores,
-        n_reads_learn                  = 1000000,
-        hashed_feature_ids             = True,
-        homopolymer_gap_penalty        = 'NULL',
-        band_size                      = '16',
-        retain_all_samples             = True,
-        omega_a                        = omega_a
-    )
+    # --- denoise ---   
+    (table, rep_sequences, metadata), derep_counts, derep_map = _denoise._denoise_single(
+            demultiplexed_seqs             = seq_unwrapped,
+            trunc_len                      = truncation_length,
+            trim_left                      = 0,
+            max_ee                         = 2.0,
+            trunc_q                        = 2,
+            max_len                        = 0,
+            pooling_method                 = 'independent',
+            chimera_method                 = 'consensus',
+            min_fold_parent_over_abundance = 1.0,
+            allow_one_off                  = False,
+            n_threads                      = cores,
+            n_reads_learn                  = 1000000,
+            hashed_feature_ids             = True,
+            homopolymer_gap_penalty        = 'NULL',
+            band_size                      = '16',
+            retain_all_samples             = True,
+            omega_a                        = omega_a
+        )
 
-    return table, rep_sequences, metadata
+    ## process output to reindex drep_counts and drep_map by ASV posrchimeric ash.
+    
+    # consume rep_sequences (asv_ash, asv_seq, (post chimeric)) into a Series before it is exhausted 
+    asv_sequences = pd.Series({s.metadata['id']: str(s) for s in rep_sequences},name="ASV_seq")
+
+    # match ASV numerical-index to ASV hash-index trough ASV sequences
+    hash_by_seq = pd.Series(asv_sequences.index, index=asv_sequences.values)         # compute conversion table from sequence to ash
+    derep_map = derep_map                                                            # define derep_info object (init as derep_map)
+    derep_map['asv_hash'] = derep_map['asv_sequence'].map(hash_by_seq)               # recover ash column from sequence column
+    derep_map['asv_hash_recomputed'] = compute_md5_hashes(derep_map['asv_sequence']) # recompute ashes for all sequences
+    #del derep_map['asv_sequence']                                                   # remve sequence column (not relevant for the matching)
+    
+    # remap derep index into string format f"derep_{n}" (for derep_counts and derep_map)
+    derep_index = "derep_"+derep_map["derep_index"].astype(str)             # define string dindex for dereplicated sequences (f"derep_{n}" where n is the int index)
+    derep_counts["derep_index"] = derep_index
+    derep_map   ["derep_index"] = derep_index
+    derep_counts = derep_counts.set_index(["derep_index"])
+    derep_map    = derep_map   .set_index(["derep_index"])
+    
+    # produce unique asv_label for derep sequences:
+    # (ASV hash for proper ASVs, index_name for chimerich ASVs, NaN for unassigned seqs)
+    assigned            = ~derep_map["asv_index"].isna() # boolean masks
+    assigned_nonchimera = ~derep_map["asv_hash" ].isna() # boolean masks
+    chimera_asv_name = "chimera_" + derep_map['asv_hash_recomputed']#derep_map["asv_index"].astype(str).str.split(".").str[0]   # names of chimera ASVs
+    hash_asv_name    = derep_map["asv_hash"]                                                       # hash names for nonchimera ASVs
+    unassigned_value = np.nan                                                                      # value in ASV column for non assigned derep sequences
+    asv_label        =  hash_asv_name.where(assigned_nonchimera,                   # hash name for proper ASVs
+                                      chimera_asv_name.where(assigned,             # chimera name for chimeric ASVs
+                                                             unassigned_value)  )  # unassigend value if unassigned
+    derep_map["ASV_id"] = asv_label
+    del derep_map["asv_hash"]
+    del derep_map["asv_index"]
+    del derep_map["asv_sequence"]
+    del derep_map["asv_hash_recomputed"]
+    
+
+    # format
+    table    = table.to_dataframe()
+    metadata = metadata.to_dataframe()
+    metadata["omega_a"] = omega_a
+    derep_counts.name = "derep_counts"
+    derep_map   .name = "derep_map"
+
+    return table, asv_sequences, metadata, derep_counts, derep_map
 
 
 
